@@ -121,7 +121,7 @@ Fix:
 
 If `openclaw devices list` shows no pending request IDs:
 - Make sure you’re visiting the Control UI at `/openclaw` (or your native app) and letting it attempt to connect
-  - Note: the Railway wrapper now proxies the gateway and injects the auth token automatically, so you should not need to paste the gateway token into the Control UI when using `/openclaw`.
+  - The wrapper does not inject the Gateway token into WebSocket requests. In the Control UI, open Settings and enter `OPENCLAW_GATEWAY_TOKEN` in the Gateway token/secret field; approve device pairing in the Gateway setup console if prompted.
 - Ensure your state dir is the Railway volume (recommended): `OPENCLAW_STATE_DIR=/data/.openclaw`
 - Check `/setup/api/debug` for the active state/workspace dirs + gateway readiness
 
