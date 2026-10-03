@@ -33,7 +33,9 @@ Recommended:
 - `OPENCLAW_WORKSPACE_DIR=/data/workspace`
 
 Optional:
-- `OPENCLAW_GATEWAY_TOKEN` — if not set, the wrapper generates one (not ideal). In a template, set it using a generated secret.
+- `OPENCLAW_GATEWAY_TOKEN` — set it as a Railway generated secret. Keep it stable across restarts.
+
+Security: `SETUP_PASSWORD` protects the dashboard pages over HTTP. WebSocket clients (including the Control UI) must authenticate to the Gateway with `OPENCLAW_GATEWAY_TOKEN`; after onboarding, open the Control UI settings and paste that token in the Gateway token/secret field. The wrapper does not inject the admin token into public WebSocket requests. Keep `/hooks/*` endpoints protected with their own hook tokens.
 
 Notes:
 - This template pins OpenClaw to a released version by default via Docker build arg `OPENCLAW_GIT_REF` (override if you want `main`).
