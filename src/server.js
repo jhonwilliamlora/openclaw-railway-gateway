@@ -1352,9 +1352,9 @@ function requireDashboardAuth(req, res, next) {
 }
 
 // --- Gateway token injection ---
-// The gateway is only reachable from this container. The Control UI in the browser
-// cannot set custom Authorization headers for WebSocket connections, so we inject
-// the token into proxied requests at the wrapper level.
+// The dashboard's HTTP routes use Basic auth before any token injection.
+// OpenClaw validates each Gateway token supplied by a WebSocket client.
+// The wrapper injects the token into authenticated dashboard HTTP requests only.
 function attachGatewayAuthHeader(req) {
   if (!req?.headers?.authorization && OPENCLAW_GATEWAY_TOKEN) {
     req.headers.authorization = `Bearer ${OPENCLAW_GATEWAY_TOKEN}`;
@@ -1362,7 +1362,7 @@ function attachGatewayAuthHeader(req) {
 }
 
 proxy.on("proxyReqWs", (_proxyReq, req) => {
-  attachGatewayAuthHeader(req);
+  // Clients authenticate with their own Gateway token.
 });
 
 app.use(requireDashboardAuth, async (req, res) => {
@@ -1387,7 +1387,7 @@ app.use(requireDashboardAuth, async (req, res) => {
     }
   }
 
-  attachGatewayAuthHeader(req);
+  if (!req.path.startsWith("/hooks")) attachGatewayAuthHeader(req);
   return proxy.web(req, res, { target: GATEWAY_TARGET });
 });
 
@@ -1462,7 +1462,7 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
 server.on("upgrade", async (req, socket, head) => {
   // Note: browsers cannot attach arbitrary HTTP headers (including Authorization: Basic)
   // in WebSocket handshakes. Do not enforce dashboard Basic auth at the upgrade layer.
-  // The gateway authenticates at the protocol layer and we inject the gateway token below.
+  // WebSocket clients must present their own Gateway token.
 
   if (!isConfigured()) {
     socket.destroy();
@@ -1474,7 +1474,7 @@ server.on("upgrade", async (req, socket, head) => {
     socket.destroy();
     return;
   }
-  attachGatewayAuthHeader(req);
+  // Clients authenticate with their own Gateway token.
   proxy.ws(req, socket, head, { target: GATEWAY_TARGET });
 });
 
