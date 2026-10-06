@@ -531,9 +531,9 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
 });
 
 const AUTH_GROUPS = [
-  { value: "openai", label: "OpenAI", hint: "Codex OAuth + API key", options: [
-    { value: "codex-cli", label: "OpenAI Codex OAuth (Codex CLI)" },
-    { value: "openai-codex", label: "OpenAI Codex (ChatGPT OAuth)" },
+  { value: "openai", label: "OpenAI", hint: "ChatGPT/Codex OAuth + API key", options: [
+    { value: "openai", label: "Codex login (browser OAuth)" },
+    { value: "openai-device-code", label: "Codex login (device code)" },
     { value: "openai-api-key", label: "OpenAI API key" }
   ]},
   { value: "anthropic", label: "Anthropic", hint: "Claude Code CLI + API key", options: [
