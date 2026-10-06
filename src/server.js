@@ -1356,6 +1356,13 @@ function requireDashboardAuth(req, res, next) {
 // OpenClaw validates each Gateway token supplied by a WebSocket client.
 // The wrapper injects the token into authenticated dashboard HTTP requests only.
 function attachGatewayAuthHeader(req) {
+  const authorization = req?.headers?.authorization || "";
+  // The Basic header is only for the wrapper's SETUP_PASSWORD check. Do not
+  // forward it to OpenClaw: the Gateway expects its own Bearer token, and its
+  // 401 response would make the browser repeat the Basic auth prompt.
+  if (/^Basic\s/i.test(authorization)) {
+    delete req.headers.authorization;
+  }
   if (!req?.headers?.authorization && OPENCLAW_GATEWAY_TOKEN) {
     req.headers.authorization = `Bearer ${OPENCLAW_GATEWAY_TOKEN}`;
   }
