@@ -1334,6 +1334,7 @@ proxy.on("error", (err, _req, res) => {
 function requireDashboardAuth(req, res, next) {
   if (req.path === "/healthz" || req.path === "/setup/healthz") return next();
   if (req.path.startsWith("/hooks")) return next(); // allow OpenClaw webhook endpoints to bypass dashboard auth
+  if (isGatewaySelfAuthenticatedPath(req.path)) return next();
   if (!SETUP_PASSWORD) return next(); // no password configured → open
   const header = req.headers.authorization || "";
   const [scheme, encoded] = header.split(" ");
@@ -1349,6 +1350,13 @@ function requireDashboardAuth(req, res, next) {
     return res.status(401).send("Invalid password");
   }
   return next();
+}
+
+// These Gateway endpoints validate their own short-lived or worker credentials.
+// Do not put the wrapper's Basic-auth prompt in front of node onboarding.
+function isGatewaySelfAuthenticatedPath(pathname) {
+  return pathname === "/j" || pathname.startsWith("/j/") ||
+    pathname === "/__openclaw__/worker" || pathname.startsWith("/__openclaw__/worker/");
 }
 
 // --- Gateway token injection ---
@@ -1394,7 +1402,9 @@ app.use(requireDashboardAuth, async (req, res) => {
     }
   }
 
-  if (!req.path.startsWith("/hooks")) attachGatewayAuthHeader(req);
+  if (!req.path.startsWith("/hooks") && !isGatewaySelfAuthenticatedPath(req.path)) {
+    attachGatewayAuthHeader(req);
+  }
   return proxy.web(req, res, { target: GATEWAY_TARGET });
 });
 
