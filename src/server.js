@@ -42,6 +42,37 @@ const WORKSPACE_DIR =
 
 // Protect /setup with a user-provided password.
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
+const WEB_SESSION_COOKIE = "__Host-openclaw-wrapper-session";
+const WEB_SESSION_KEY = crypto.randomBytes(32);
+const WEB_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+
+function hasWebSession(req) {
+  const value = (req.headers.cookie || "").split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${WEB_SESSION_COOKIE}=`))
+    ?.slice(WEB_SESSION_COOKIE.length + 1);
+  if (!value || value.length > 256) return false;
+  const [expires, nonce, signature, extra] = value.split(".");
+  if (extra !== undefined || !/^\d+$/.test(expires || "") ||
+      !/^[a-f0-9]{32}$/.test(nonce || "") ||
+      !/^[a-f0-9]{64}$/.test(signature || "")) return false;
+  const deadline = Number(expires);
+  if (!Number.isSafeInteger(deadline) || deadline <= Date.now() ||
+      deadline > Date.now() + WEB_SESSION_TTL_MS) return false;
+  const expected = crypto.createHmac("sha256", WEB_SESSION_KEY)
+    .update(`${req.headers.host || ""}.${expires}.${nonce}`).digest();
+  return crypto.timingSafeEqual(expected, Buffer.from(signature, "hex"));
+}
+
+function establishWebSession(req, res) {
+  const expires = String(Date.now() + WEB_SESSION_TTL_MS);
+  const nonce = crypto.randomBytes(16).toString("hex");
+  const signature = crypto.createHmac("sha256", WEB_SESSION_KEY)
+    .update(`${req.headers.host || ""}.${expires}.${nonce}`).digest("hex");
+  // Browser-session cookie: no password or Gateway token is stored in it.
+  // Restarting the wrapper invalidates every session; HTTPS is required.
+  res.append("Set-Cookie", `${WEB_SESSION_COOKIE}=${expires}.${nonce}.${signature}; Path=/; HttpOnly; Secure; SameSite=Strict`);
+}
 
 // Gateway admin token (protects OpenClaw gateway + Control UI).
 // Must be stable across restarts. If not provided via env, persist it in the state dir.
@@ -279,6 +310,8 @@ function requireSetupAuth(req, res, next) {
       .send("SETUP_PASSWORD is not set. Set it in Railway Variables before using /setup.");
   }
 
+  if (hasWebSession(req)) return next();
+
   const header = req.headers.authorization || "";
   const [scheme, encoded] = header.split(" ");
   if (scheme !== "Basic" || !encoded) {
@@ -292,6 +325,7 @@ function requireSetupAuth(req, res, next) {
     res.set("WWW-Authenticate", 'Basic realm="OpenClaw Setup"');
     return res.status(401).send("Invalid password");
   }
+  establishWebSession(req, res);
   return next();
 }
 
@@ -1336,6 +1370,7 @@ function requireDashboardAuth(req, res, next) {
   if (req.path.startsWith("/hooks")) return next(); // allow OpenClaw webhook endpoints to bypass dashboard auth
   if (isGatewaySelfAuthenticatedPath(req.path)) return next();
   if (!SETUP_PASSWORD) return next(); // no password configured → open
+  if (hasWebSession(req)) return next();
   const header = req.headers.authorization || "";
   const [scheme, encoded] = header.split(" ");
   if (scheme !== "Basic" || !encoded) {
@@ -1349,6 +1384,7 @@ function requireDashboardAuth(req, res, next) {
     res.set("WWW-Authenticate", 'Basic realm="OpenClaw Dashboard"');
     return res.status(401).send("Invalid password");
   }
+  establishWebSession(req, res);
   return next();
 }
 
@@ -1363,7 +1399,18 @@ function isGatewaySelfAuthenticatedPath(pathname) {
 // The dashboard's HTTP routes use Basic auth before any token injection.
 // OpenClaw validates each Gateway token supplied by a WebSocket client.
 // The wrapper injects the token into authenticated dashboard HTTP requests only.
+function stripWrapperSessionCookie(req) {
+  // Keep the wrapper session private to the wrapper, not the upstream Gateway.
+  if (req.headers.cookie) {
+    const cookies = req.headers.cookie.split(";")
+      .filter((part) => !part.trim().startsWith(`${WEB_SESSION_COOKIE}=`)).join(";");
+    if (cookies) req.headers.cookie = cookies;
+    else delete req.headers.cookie;
+  }
+}
+
 function attachGatewayAuthHeader(req) {
+  stripWrapperSessionCookie(req);
   const authorization = req?.headers?.authorization || "";
   // The Basic header is only for the wrapper's SETUP_PASSWORD check. Do not
   // forward it to OpenClaw: the Gateway expects its own Bearer token, and its
@@ -1378,6 +1425,10 @@ function attachGatewayAuthHeader(req) {
 
 proxy.on("proxyReqWs", (_proxyReq, req) => {
   // Clients authenticate with their own Gateway token.
+  stripWrapperSessionCookie(req);
+  // http-proxy has already created the outgoing headers at this point.
+  if (req.headers.cookie) _proxyReq.setHeader("cookie", req.headers.cookie);
+  else _proxyReq.removeHeader("cookie");
 });
 
 app.use(requireDashboardAuth, async (req, res) => {
