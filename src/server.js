@@ -331,6 +331,48 @@ function requireSetupAuth(req, res, next) {
 
 const app = express();
 app.disable("x-powered-by");
+
+// Teams authenticates its own callbacks with Microsoft JWTs. Keep that exact
+// route separate from dashboard Basic auth and Gateway-token injection.
+// The plugin's JWT, tenant and sender checks remain authoritative upstream.
+const teamsWebhookProxy = httpProxy.createProxyServer({
+  target: GATEWAY_TARGET,
+  changeOrigin: false,
+  proxyTimeout: 30_000,
+  timeout: 30_000,
+});
+teamsWebhookProxy.on("error", (_err, _req, res) => {
+  if (!res.headersSent) res.writeHead(503, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: "Teams receiver unavailable" }));
+});
+app.all("/api/messages", (req, res, next) => {
+  if (req.path !== "/api/messages") return res.sendStatus(404);
+  if (req.method !== "POST") {
+    res.set("Allow", "POST");
+    return res.sendStatus(405);
+  }
+  if (!/^Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/i.test(req.headers.authorization || "")) {
+    return res.status(401).json({ error: "Microsoft bearer authentication required" });
+  }
+  if (!req.is("application/json")) return res.sendStatus(415);
+  return next();
+}, express.raw({ type: "application/json", limit: "1mb", inflate: false }), async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) return res.sendStatus(400);
+  if (!isConfigured()) return res.status(503).json({ error: "Teams receiver unavailable" });
+  try {
+    await ensureGatewayRunning();
+  } catch {
+    return res.status(503).json({ error: "Teams receiver unavailable" });
+  }
+  // Never supply wrapper cookies, Basic credentials or an operator Gateway
+  // token to this route. Preserve the original Microsoft JWT and body bytes.
+  delete req.headers.cookie;
+  delete req.headers["proxy-authorization"];
+  delete req.headers["transfer-encoding"];
+  req.headers["content-length"] = String(req.body.length);
+  const { Readable } = await import("node:stream");
+  return teamsWebhookProxy.web(req, res, { buffer: Readable.from([req.body]) });
+});
 app.use(express.json({ limit: "1mb" }));
 
 // Minimal health endpoint for Railway.
